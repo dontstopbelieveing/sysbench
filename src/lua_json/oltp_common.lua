@@ -67,7 +67,7 @@ sysbench.cmdline.options = {
    secondary =
       {"Use a secondary index in place of the PRIMARY KEY", false},
    create_secondary =
-      {"Create a secondary index in addition to the PRIMARY KEY", true},
+      {"Create a secondary index in addition to the PRIMARY KEY", false},
    reconnect =
       {"Reconnect after every N events. The default (0) is to not reconnect",
        0},
@@ -108,6 +108,7 @@ function cmd_warmup()
    con:query("SET tmp_table_size=2*1024*1024*1024")
    con:query("SET max_heap_table_size=2*1024*1024*1024")
 
+-- TODO: Pending Test Review for if needs to be changed for JSON   (P5)
    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.tables,
    sysbench.opt.threads do
       local t = "sbtest" .. i
@@ -189,12 +190,11 @@ function create_table(drv, con, table_num)
 
    print(string.format("Creating table 'sbtest%d'...", table_num))
 
+-- TODO: Review for if needs to be changed for JSON (P1)
    query = string.format([[
 CREATE TABLE sbtest%d(
   id %s,
-  k INTEGER DEFAULT '0' NOT NULL,
-  c CHAR(120) DEFAULT '' NOT NULL,
-  pad CHAR(60) DEFAULT '' NOT NULL,
+  FIELD0 JSON,
   %s (id)
 ) %s %s]],
       table_num, id_def, id_index_def, engine_def,
@@ -207,10 +207,11 @@ CREATE TABLE sbtest%d(
                           sysbench.opt.table_size, table_num))
    end
 
+-- TODO: Review for if needs to be changed for JSON (P2)
    if sysbench.opt.auto_inc then
-      query = "INSERT INTO sbtest" .. table_num .. "(k, c, pad) VALUES"
+      query = "INSERT INTO sbtest" .. table_num .. "(FIELD0) VALUES"
    else
-      query = "INSERT INTO sbtest" .. table_num .. "(id, k, c, pad) VALUES"
+      query = "INSERT INTO sbtest" .. table_num .. "(id, FIELD0) VALUES"
    end
 
    con:bulk_insert_init(query)
@@ -224,11 +225,11 @@ CREATE TABLE sbtest%d(
       pad_val = get_pad_value()
 
       if (sysbench.opt.auto_inc) then
-         query = string.format("(%d, '%s', '%s')",
+         query = string.format(" (JSON_OBJECT('k',%d,'c', '%s','pad', '%s'))",
                                sysbench.rand.default(1, sysbench.opt.table_size),
                                c_val, pad_val)
       else
-         query = string.format("(%d, %d, '%s', '%s')",
+         query = string.format("(%d, JSON_OBJECT('k',%d,'c', '%s','pad', '%s'))",
                                i,
                                sysbench.rand.default(1, sysbench.opt.table_size),
                                c_val, pad_val)
@@ -240,32 +241,50 @@ CREATE TABLE sbtest%d(
    con:bulk_insert_done()
 
    if sysbench.opt.create_secondary then
+      --print(string.format("Creating a secondary index on 'sbtest%d'...",
+      --                    table_num))
+      --con:query(string.format("CREATE INDEX k_%d ON sbtest%d(k)",
+      --                       table_num, table_num))
+      -- TODO:  Add  a create secondary index implementation using virtual generated column (P3)
+      print(string.format("Creating a virtual generated column in 'sbtest%d'...",
+                          table_num))
+      con:query(string.format("ALTER TABLE sbtest%d ADD COLUMN k INT GENERATED ALWAYS AS (FIELD0->'$.k')",table_num))
       print(string.format("Creating a secondary index on 'sbtest%d'...",
                           table_num))
       con:query(string.format("CREATE INDEX k_%d ON sbtest%d(k)",
-                              table_num, table_num))
+                           table_num, table_num))
+      -- TODO:  Add  a create secondary index implementation using virtual stored column (P4)
+--[[      print(string.format("Creating a virtual stored column in 'sbtest%d'...",
+                          table_num))
+      con:query(string.format("ALTER TABLE sbtest%d ADD COLUMN k INT GENERATED ALWAYS AS (FIELD0->'$.k') STORED",table_num))
+      print(string.format("Creating a secondary index on 'sbtest%d'...",
+                          table_num))
+      con:query(string.format("CREATE INDEX k_%d ON sbtest%d(k)",
+                           table_num, table_num))]]
    end
 end
 
 local t = sysbench.sql.type
+-- TODO: Review for if needs to be changed for JSON
+
 local stmt_defs = {
    point_selects = {
-      "SELECT c FROM sbtest%u WHERE id=?",
+      "SELECT FIELD0->'$.c' FROM sbtest%u WHERE id=?",
       t.INT},
    simple_ranges = {
-      "SELECT c FROM sbtest%u WHERE id BETWEEN ? AND ?",
+      "SELECT FIELD0->'$.c' FROM sbtest%u WHERE id BETWEEN ? AND ?",
       t.INT, t.INT},
    sum_ranges = {
-      "SELECT SUM(k) FROM sbtest%u WHERE id BETWEEN ? AND ?",
+      "SELECT SUM(FIELD0->'$.k') FROM sbtest%u WHERE id BETWEEN ? AND ?",
        t.INT, t.INT},
    order_ranges = {
-      "SELECT c FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c",
+      "SELECT FIELD0->'$.c' FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY FIELD0->'$.c'",
        t.INT, t.INT},
    distinct_ranges = {
-      "SELECT DISTINCT c FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c",
+      "SELECT DISTINCT FIELD0->'$.c' FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY FIELD0->'$.c'",
       t.INT, t.INT},
    index_updates = {
-      "UPDATE sbtest%u SET k=k+1 WHERE id=?",
+      "UPDATE sbtest%u SET FIELD0->'$.k'=FIELD0->'$.k'+1 WHERE id=?",
       t.INT},
    non_index_updates = {
       "UPDATE sbtest%u SET c=? WHERE id=?",
@@ -274,7 +293,7 @@ local stmt_defs = {
       "DELETE FROM sbtest%u WHERE id=?",
       t.INT},
    inserts = {
-      "INSERT INTO sbtest%u (id, k, c, pad) VALUES (?, ?, ?, ?)",
+      "INSERT INTO sbtest%u (id, FIELD0) VALUES (?, JSON_OBJECT('k',?,'c',?,'pad',?))",
       t.INT, t.INT, {t.CHAR, 120}, {t.CHAR, 60}},
 }
 
