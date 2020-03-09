@@ -40,6 +40,7 @@ function prepare_statements()
    -- function to be defined
 end
 
+-- TODO: Change insert for JSON (P6)
 function event()
    local table_name = "sbtest" .. sysbench.rand.uniform(1, sysbench.opt.tables)
    local k_val = sysbench.rand.default(1, sysbench.opt.table_size)
@@ -58,8 +59,8 @@ function event()
          i = sysbench.rand.unique() - 2147483648
       end
 
-      con:query(string.format("INSERT INTO %s (id, k, c, pad) VALUES " ..
-                                 "(%d, %d, '%s', '%s')",
+      con:query(string.format("INSERT INTO %s (id, FIELD0) VALUES " ..
+                                 "(%d, JSON_OBJECT('k',%d,'c', '%s','pad', '%s'))",
                               table_name, i, k_val, c_val, pad_val))
    end
 
